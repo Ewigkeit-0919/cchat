@@ -1,0 +1,7 @@
+.devcontainer/
+.idea/
+*.beam
+ebin/
+.eunit/
+deps/
+_build/
