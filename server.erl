@@ -1,165 +1,109 @@
 -module(server).
--export([start/1, stop/1]).
+-export([start/1,stop/1]).
 
-% This record defines the structure of the state of a server
-% name: 服务器注册的名称
-% channels: 已创建的频道名称列表（字符串形式）
+% Server record that holds the channels and the nicks
+% channels now stores {ChannelName, [UserPids]} tuples
 -record(server_st, {
-  name,
-  channels
+  channels = [],
+  nicks = []
 }).
 
-% This record defines the structure of the state of a channel
-% name: 频道名称（字符串形式，如 "#chat"）
-% clients: 加入该频道的客户端进程 PID 列表
--record(channel_st, {
-  name,
-  clients
-}).
-
-% 初始化服务器状态
-initial_server(ServerAtom) ->
-  #server_st{
-    name = ServerAtom,
-    channels = []  % 初始没有任何频道
-  }.
-
-% 初始化频道状态
-initial_channel(ChannelName) ->
-  #channel_st{
-    name = ChannelName,
-    clients = []  % 初始没有任何客户端
-  }.
 
 % Start a new server process with the given name
-% ServerAtom: 服务器注册的名称（atom）
-% 返回: 服务器进程的 PID
+% Do not change the signature of this function.
 start(ServerAtom) ->
-  % - Spawn a new process which waits for a message, handles it, then loops infinitely
-  % - Register this process to ServerAtom
-  % - Return the process ID
-  % 使用 genserver 启动服务器进程
-  % handleS 是处理服务器消息的回调函数
-  genserver:start(ServerAtom, initial_server(ServerAtom), fun handleS/2).
+  genserver:start(ServerAtom, #server_st{}, fun handle/2).
 
 % Stop the server process registered to the given name,
 % together with any other associated processes
 stop(ServerAtom) ->
-  % 先请求服务器停止所有频道
-  genserver:request(ServerAtom, {stop}),
-  % 然后停止服务器自身
   genserver:stop(ServerAtom).
 
-% ============================================================================
-% 服务器消息处理器 (handleS)
-% 处理发送给主服务器进程的消息
-% ============================================================================
-
-% 处理停止服务器的请求
-handleS(St, {stop}) ->
-  % 遍历所有频道，逐个停止频道进程
-  lists:foreach(fun(Channel) ->
-    genserver:stop(list_to_atom(Channel))
-                end, St#server_st.channels),
-  {reply, ok, St};
-
-% 处理客户端加入频道的请求
-% Channel: 频道名称（字符串，如 "#chat"）
-% Pid: 客户端进程 PID
-handleS(St, {join, Channel, Pid}) ->
-  % 1. 检查频道进程是否存在
-  case whereis(list_to_atom(Channel)) of
-    undefined ->
-      % 频道不存在，创建新的频道进程
-      genserver:start(list_to_atom(Channel),
-        initial_channel(Channel),
-        fun handleC/2);
-    _ ->
-      % 频道已存在，不需要创建
-      ok
-  end,
-
-  % 2. 将加入请求转发给频道进程
-  Result = genserver:request(list_to_atom(Channel), {join, Pid}),
-
-  % 3. 如果加入成功，将频道添加到服务器的频道列表中（避免重复）
-  NewChannels = case Result of
-                  ok ->
-                    % 检查频道是否已在列表中
-                    case lists:member(Channel, St#server_st.channels) of
-                      false -> [Channel | St#server_st.channels];  % 添加新频道
-                      true -> St#server_st.channels  % 已存在，不重复添加
-                    end;
-                  _ ->
-                    % 加入失败，不修改频道列表
-                    St#server_st.channels
-                end,
-
-  % 4. 返回结果和更新后的状态
-  {reply, Result, St#server_st{channels = NewChannels}};
-
-% 处理客户端离开频道的请求
-handleS(St, {leave, Channel, Pid}) ->
-  % 直接将请求转发给频道进程处理
-  Result = genserver:request(list_to_atom(Channel), {leave, Pid}),
-  {reply, Result, St};
-
-% 处理客户端发送消息的请求
-% Channel: 目标频道
-% Nick: 发送者的昵称
-% Msg: 消息内容
-% Sender: 发送者的 PID
-handleS(St, {message_send, Channel, Nick, Msg, Sender}) ->
-  % 将消息转发给频道进程处理
-  Result = genserver:request(list_to_atom(Channel),
-    {message_send, Nick, Msg, Sender}),
-  {reply, Result, St}.
-
-% ============================================================================
-% 频道消息处理器 (handleC)
-% 处理发送给频道进程的消息
-% ============================================================================
-
-% 处理客户端加入频道
-handleC(St, {join, Pid}) ->
-  % 检查客户端是否已经在频道中
-  case lists:member(Pid, St#channel_st.clients) of
+% Handle join request
+% Sees if the channel that the client attempts to join exists, if it does it joins that channel
+% If the channel does not exist it creates the channel and then joins the client to it
+handle(State = #server_st{channels = ExistingChannels, nicks = ExistingNicks}, {join, ChannelToJoin, NickToJoin, Sender}) ->
+  case lists:keyfind(ChannelToJoin, 1, ExistingChannels) of
+    {ChannelToJoin, Users} ->
+      % Channel exists, check if user already joined
+      IsAlreadyInChannel = lists:member(Sender, Users),
+      if IsAlreadyInChannel ->
+        {reply, {error, user_already_joined, "User already in chat"}, State};
+        true ->
+          % Add user to channel
+          UpdatedChannels = lists:keyreplace(ChannelToJoin, 1, ExistingChannels, {ChannelToJoin, [Sender | Users]}),
+          % Check and add nick if needed
+          NickExists = lists:member(NickToJoin, ExistingNicks),
+          if NickExists ->
+            {reply, join, State#server_st{channels = UpdatedChannels}};
+            true ->
+              {reply, join, State#server_st{channels = UpdatedChannels, nicks = [NickToJoin | ExistingNicks]}}
+          end
+      end;
     false ->
-      % 客户端不在频道中，添加到成员列表
-      {reply, ok, St#channel_st{clients = [Pid | St#channel_st.clients]}};
-    true ->
-      % 客户端已在频道中，返回错误
-      {reply, user_already_joined, St}
+      % Channel does not exist, create it with this user
+      NewChannels = [{ChannelToJoin, [Sender]} | ExistingChannels],
+      NickExists = lists:member(NickToJoin, ExistingNicks),
+      if NickExists ->
+        {reply, join, State#server_st{channels = NewChannels}};
+        true ->
+          {reply, join, State#server_st{channels = NewChannels, nicks = [NickToJoin | ExistingNicks]}}
+      end
   end;
 
-% 处理客户端离开频道
-handleC(St, {leave, Pid}) ->
-  % 检查客户端是否在频道中
-  case lists:member(Pid, St#channel_st.clients) of
-    true ->
-      % 客户端在频道中，从成员列表中移除
-      {reply, ok, St#channel_st{
-        clients = lists:delete(Pid, St#channel_st.clients)}};
+% Handle leave request
+% It checks if the channel exists and if it does it checks if the client is in the channel
+% If the channel doesn't exist or the client was not in the channel it errors out
+handle(State = #server_st{channels = ExistingChannels}, {leave, ChannelToLeave, PidToLeave}) ->
+  case lists:keyfind(ChannelToLeave, 1, ExistingChannels) of
+    {ChannelToLeave, Users} ->
+      IsInChannel = lists:member(PidToLeave, Users),
+      if IsInChannel ->
+        ResultingList = lists:delete(PidToLeave, Users),
+        UpdatedChannels = lists:keyreplace(ChannelToLeave, 1, ExistingChannels, {ChannelToLeave, ResultingList}),
+        {reply, leave, State#server_st{channels = UpdatedChannels}};
+        true ->
+          {reply, {error, user_not_joined, "User did not join"}, State}
+      end;
     false ->
-      % 客户端不在频道中，返回错误
-      {reply, user_not_joined, St}
+      {reply, {error, user_not_joined, "User did not join"}, State}
   end;
 
-% 处理消息发送
-% Nick: 发送者昵称
-% Msg: 消息内容
-% Sender: 发送者 PID
-handleC(St, {message_send, Nick, Msg, Sender}) ->
-  % 检查发送者是否在频道中
-  case lists:member(Sender, St#channel_st.clients) of
-    true ->
-      % 发送者在频道中，向所有成员广播消息（包括发送者自己）
-      lists:foreach(fun(ClientPid) ->
-        % 直接发送消息给客户端进程（异步）
-        ClientPid ! {message_receive, St#channel_st.name, Nick, Msg}
-                    end, St#channel_st.clients),
-      {reply, ok, St};
+% Handle message send
+% Distributes messages to all connected clients in the channel
+handle(State = #server_st{channels = ExistingChannels}, {message_send, Channel, SenderNick, SenderPid, Msg}) ->
+  case lists:keyfind(Channel, 1, ExistingChannels) of
+    {Channel, Users} ->
+      case lists:member(SenderPid, Users) of
+        true ->
+          spawn(fun() ->
+            lists:foreach(
+              fun(Pid) ->
+                if Pid == SenderPid -> skip;
+                  true -> genserver:request(Pid, {message_receive, Channel, SenderNick, Msg})
+                end
+              end,
+              Users)
+                end),
+          {reply, ok, State};
+        false ->
+          {reply, {error, user_not_joined, "User is not in channel"}, State}
+      end;
     false ->
-      % 发送者不在频道中，返回错误
-      {reply, user_not_joined, St}
-  end.
+      {reply, {error, user_not_joined, "User is not in channel"}, State}
+  end;
+
+% Re-nick
+% Looks to see if the nick is taken, if it is then it errors out, otherwise it returns an updated state
+handle(State = #server_st{nicks = ExistingNicks}, {nick, OldNick, NewNick}) ->
+  NickExists = lists:member(NewNick, ExistingNicks),
+  if NickExists ->
+    {reply, error, State};
+    true ->
+      NewState = #server_st {channels = State#server_st.channels, nicks = [NewNick | lists:delete(OldNick, ExistingNicks)]},
+      {reply, nick, NewState}
+  end;
+
+% Catch All >:(
+handle(State, Data) ->
+  {error, instruction_not_found, ["The instruction does not exist", State, Data]}.

@@ -18,82 +18,51 @@ initial_state(Nick, GUIAtom, ServerAtom) ->
     server = ServerAtom
   }.
 
-% handle/2 handles each kind of request from GUI
-% Parameters:
-%   - the current state of the client (St)
-%   - request data from GUI
-% Must return a tuple {reply, Data, NewState}, where:
-%   - Data is what is sent to GUI, either the atom `ok` or a tuple {error, Atom, "Error message"}
-%   - NewState is the updated state of the client
 
 % Join channel
+% Checks if the server exists and if it does it tries to send its pid and nick to the server.
 handle(St, {join, Channel}) ->
-  % TODO: Implement this function
-  % {reply, ok, St} ;
-  % 向服务器发送加入频道请求
-  % 使用 catch 捕获异常（如服务器不存在或无响应）
-  case catch (genserver:request(St#client_st.server, {join, Channel, self()})) of
-    {'EXIT', _} ->
-      % 服务器无法访问（不存在或崩溃）
-      {reply, {error, server_not_reached, "Server unreachable"}, St};
-    ok ->
-      % 加入成功
-      {reply, ok, St};
-    user_already_joined ->
-      % 已经在该频道中
-      {reply, {error, user_already_joined, "User already joined this channel"}, St};
-    _ ->
-      % 其他错误
-      {reply, {error, server_not_reached, "Unexpected error"}, St}
+  ServerExists = lists:member(St#client_st.server, registered()),
+  if ServerExists ->
+    Result = (catch (genserver:request(St#client_st.server, {join, Channel, St#client_st.nick, self()}))),
+    case Result of
+      {error, user_already_joined,_} -> {reply, Result, St};
+      join -> {reply, ok, St};
+      {'EXIT', _} -> {reply, {error, server_not_reached, "Server does not respond"}, St}
+    end;
+    true ->
+      {reply, {error, server_not_reached, "Server unreachable"}, St}
   end;
 
 % Leave channel
+% Sends a leave request to the server and checks if the server processed it correctly.
 handle(St, {leave, Channel}) ->
-  % TODO: Implement this function
-  % {reply, ok, St} ;
-  % 注意：这里应该向服务器发送请求，而不是直接向频道发送
-  % 修改为通过服务器处理，保持架构一致性
-  case catch (genserver:request(St#client_st.server, {leave, Channel, self()})) of
-    {'EXIT', _} ->
-      % 服务器无法访问
-      {reply, {error, server_not_reached, "Server unreachable"}, St};
-    ok ->
-      % 离开成功
-      {reply, ok, St};
-    user_not_joined ->
-      % 用户不在该频道中
-      {reply, {error, user_not_joined, "User is not in this channel"}, St};
-    _ ->
-      % 其他错误
-      {reply, {error, server_not_reached, "Unexpected error"}, St}
+  Result = (catch genserver:request(St#client_st.server, {leave, Channel, self()})),
+  case Result of
+    {error, user_not_joined, _} -> {reply, Result, St};
+    leave -> {reply, ok, St};
+    {'EXIT', _} -> {reply, ok, St}
   end;
 
-% Sending message (from GUI, to channel)
-handle(St, {message_send, Channel, Msg}) ->
-  % TODO: Implement this function
-  % {reply, ok, St} ;
-  % 向服务器发送消息请求
-  % 修改为通过服务器转发，而不是直接发给频道
-  case catch (genserver:request(St#client_st.server,
-    {message_send, Channel, St#client_st.nick, Msg, self()})) of
-    {'EXIT', _} ->
-      % 服务器无法访问
-      {reply, {error, server_not_reached, "Server unreachable"}, St};
-    ok ->
-      % 消息发送成功
-      {reply, ok, St};
-    user_not_joined ->
-      % 用户不在该频道中，无法发送消息
-      {reply, {error, user_not_joined, "User is not in this channel"}, St};
-    _ ->
-      % 其他错误
-      {reply, {error, server_not_reached, "Unexpected error"}, St}
+% Sending message (from GUI, to server)
+% Tries to send a message to the server which will distribute it to the channel
+handle(St = #client_st {nick = Nick}, {message_send, Channel, Msg}) ->
+  Result = (catch (genserver:request(St#client_st.server, {message_send, Channel, Nick, self(), Msg}))),
+  case Result of
+    {error, user_not_joined, _} -> {reply, Result, St};
+    ok -> {reply, ok , St};
+    {'EXIT', _} -> {reply, {error, server_not_reached, "Server does not respond"}, St}
   end;
 
-% This case is only relevant for the distinction assignment!
 % Change nick (no check, local only)
+% Tries to change the nick and errors out on a taken nick or on server disconnect
 handle(St, {nick, NewNick}) ->
-  {reply, ok, St#client_st{nick = NewNick}};
+  Reply = (catch (genserver:request(St#client_st.server, {nick, St#client_st.nick, NewNick}))),
+  case Reply of
+    error -> {reply, {error, nick_taken, "Nick is taken"}, St};
+    nick -> {reply, ok, St#client_st{nick = NewNick}};
+    {'EXIT', _} -> {reply, {error, server_not_reached, "Server does not respond"}, St}
+  end;
 
 % ---------------------------------------------------------------------------
 % The cases below do not need to be changed...
