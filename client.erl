@@ -36,7 +36,7 @@ handle(St, {join, Channel}) ->
 			{reply, {error, server_not_reached, "failed to reach the server"}, St};
 		% If the server timeout occurs
 		timeout_error ->
-			{reply, {error, server_not_reached, "failed to reach the server"}, St};
+			{reply, {error, server_not_reached, "failed to reach the server (timeout)"}, St};
 		% If the server responds with 'ok', the join operation was successful
 		ok ->
 			{reply, ok, St};
@@ -54,7 +54,7 @@ handle(St, {leave, Channel}) ->
 		{'EXIT', _} ->
 			{reply, {error, server_not_reached, "failed to reach the server"}, St};
 		timeout_error ->
-			{reply, {error, server_not_reached, "failed to reach the server"}, St};
+			{reply, {error, server_not_reached, "failed to reach the server (timeout)"}, St};
 		ok ->
 			{reply, ok, St};
 		error ->
@@ -70,7 +70,7 @@ handle(St, {message_send, Channel, Msg}) ->
 		{'EXIT', _} ->
 			{reply, {error, server_not_reached, "failed to reach the server"}, St};
 		timeout_error ->
-			{reply, {error, server_not_reached, "failed to reach the server"}, St};
+			{reply, {error, server_not_reached, "failed to reach the server (timeout)"}, St};
 		ok ->
 			{reply, ok, St};
 		error ->
@@ -86,7 +86,7 @@ handle(St, {nick, NewNick}) ->
 		{'EXIT', _} ->
 			{reply, {error, server_not_reached, "failed to reach the server"}, St};
 		timeout_error ->
-			{reply, {error, server_not_reached, "failed to reach the server"}, St};
+			{reply, {error, server_not_reached, "failed to reach the server (timeout)"}, St};
 		ok ->
 			{reply, ok, St#client_st{nick = NewNick}};
 		error ->
