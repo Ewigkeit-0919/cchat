@@ -97,7 +97,7 @@ handleChannel(St, {join, Pid}) ->
 	case lists:member(Pid, St#channel_st.clients) of
 		false -> % user not found
 			{reply, ok, St#channel_st{clients = [Pid | St#channel_st.clients]}}; % add user
-		{'EXIT', _} -> % user is already in channel
+		true -> % user is already in channel
 			{reply, error, St}
 	end;
 
@@ -106,16 +106,16 @@ handleChannel(St, {leave, Pid}) ->
 	case lists:member(Pid, St#channel_st.clients) of
 		true -> % user found
 			{reply, ok, St#channel_st{clients = lists:delete(Pid, St#channel_st.clients)}}; %delete user
-		_ -> % no user found
+		false -> % no user found
 			{reply, error, St}
 	end;
 
 % Broadcast a message to all users in the channel except the sender
-handleChannel(St, {message_send, Pid, Msg, Sender}) ->
+handleChannel(St, {message_send, Nick, Msg, Sender}) ->
 	case lists:member(Sender, St#channel_st.clients) of
 		true -> % user in channel
 			spawn(fun() ->
-				[genserver:request(ChannelUsers, {message_receive, St#channel_st.name, Pid, Msg}) || ChannelUsers <- St#channel_st.clients, ChannelUsers =/= Sender]
+				[genserver:request(ChannelUsers, {message_receive, St#channel_st.name, Nick, Msg}) || ChannelUsers <- St#channel_st.clients, ChannelUsers =/= Sender]
 				  end),
 			{reply, ok, St};
 		false -> % user not in channel
