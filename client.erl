@@ -28,8 +28,8 @@ initial_state(Nick, GUIAtom, ServerAtom) ->
 
 % Join channel
 handle(St, {join, Channel}) ->
-	% Attempt to join the user to the specified channel by sending a request to the server
-	case catch (genserver:request(St#client_st.server, {join, Channel, self()})) of
+	% Attempt to join the user to the specified channel along with th nick by sending a request to the server
+	case catch (genserver:request(St#client_st.server, {join, Channel,St#client_st.nick, self()})) of
 		% If the server process crashes or is unreachable, catch the EXIT signal
 		{'EXIT', _} ->
 			{reply, {error, server_not_reached, "server unreachable"}, St};

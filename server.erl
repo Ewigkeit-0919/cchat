@@ -46,32 +46,42 @@ handle(St, {stop}) ->
 	{reply, ok, St};
 
 % Handle a user joining a channel - creates channel if it doesn't exist
-handle(St, {join, Channel, Pid}) ->
+% Also registers the user's nickname if it's their first join
+handle(St, {join, Channel, Nick, Pid}) ->
+	% Extract existing nicks
+	ExistingNicks = St#server_st.nicks,
+	% Check if this nick is already registered
+	NickRegistered = lists:member(Nick, ExistingNicks),
+	% Register nick if it's the first time
+	UpdatedNicks = case NickRegistered of
+					   true -> ExistingNicks;
+					   false -> [Nick | ExistingNicks]
+				   end,
+	% Check if channel exists, create if needed
 	case whereis(list_to_atom(Channel)) of
-		undefined -> % true if no such channel
+		undefined -> % channel doesn't exist
 			genserver:start(list_to_atom(Channel), initial_channel_state(Channel), fun handleChannel/2);
 		_ -> % channel exists
 			ok
 	end,
-
+	% Try to join the channel
 	case catch (genserver:request(list_to_atom(Channel), {join, Pid})) of
-		ok -> % could join
-			{reply, ok, St#server_st{channels = [Channel | St#server_st.channels]}};
+		ok -> % successfully joined
+			{reply, ok, St#server_st{channels = [Channel | St#server_st.channels], nicks = UpdatedNicks}};
 		_ ->
-			{reply, error, St}
+			% Join failed, but still update nicks if it was a new nick
+			{reply, error, St#server_st{nicks = UpdatedNicks}}
 	end;
 
 % Handle nickname change request - checks if new nick is available
 handle(St, {nick, OldNick, NewNick}) ->
 	% Extract the existing nicks list from server state
 	ExistingNicks = St#server_st.nicks,
-
 	% First, ensure the old nick is in the list
 	ExistingNicksWithOld = case lists:member(OldNick, ExistingNicks) of
 							   true -> ExistingNicks;
 							   false -> [OldNick | ExistingNicks]
 						   end,
-
 	% Check if the new nickname already exists
 	case lists:member(NewNick, ExistingNicksWithOld) of
 		true ->
