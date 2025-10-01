@@ -33,6 +33,9 @@ handle(St, {join, Channel}) ->
 		% If the server process crashes or is unreachable, catch the EXIT signal
 		{'EXIT', _} ->
 			{reply, {error, server_not_reached, "server unreachable"}, St};
+		% If the server timeout occurs
+		timeout_error ->
+			{reply, {error, server_not_reached, "server unreachable"}, St};
 		% If the server responds with 'ok', the join operation was successful
 		ok ->
 			{reply, ok, St};
@@ -49,6 +52,8 @@ handle(St, {leave, Channel}) ->
 	case catch (genserver:request(list_to_atom(Channel), {leave, self()})) of
 		{'EXIT', _} ->
 			{reply, {error, server_not_reached, "server unreachable"}, St};
+		timeout_error ->
+			{reply, {error, server_not_reached, "server unreachable"}, St};
 		ok ->
 			{reply, ok, St};
 		error ->
@@ -63,6 +68,8 @@ handle(St, {message_send, Channel, Msg}) ->
 	case (catch genserver:request(list_to_atom(Channel), {message_send, St#client_st.nick, Msg, self()})) of
 		{'EXIT', _} ->
 			{reply, {error, server_not_reached, "server unreachable"}, St};
+		timeout_error ->
+			{reply, {error, server_not_reached, "server unreachable"}, St};
 		ok ->
 			{reply, ok, St};
 		error ->
@@ -76,7 +83,9 @@ handle(St, {nick, NewNick}) ->
 	% Include both the old nick and the new nick for validation
 	case catch (genserver:request(St#client_st.server, {nick, St#client_st.nick, NewNick})) of
 		{'EXIT', _} ->
-			{reply, {error, server_not_reached, "Server does not respond"}, St};
+			{reply, {error, server_not_reached, "Server unreachable"}, St};
+		timeout_error ->
+			{reply, {error, server_not_reached, "server unreachable"}, St};
 		ok ->
 			{reply, ok, St#client_st{nick = NewNick}};
 		error ->
