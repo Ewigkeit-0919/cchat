@@ -28,20 +28,21 @@ initial_state(Nick, GUIAtom, ServerAtom) ->
 
 % Join channel
 handle(St, {join, Channel}) ->
-	% Attempt to join the user to the specified channel along with th nick by sending a request to the server
-	case catch (genserver:request(St#client_st.server, {join, Channel,St#client_st.nick, self()})) of
+	% Attempt to join the user to the specified channel along with nick by sending a request to the server
+	% Server first creates the channel, then channel adds the client
+	case catch (genserver:request(St#client_st.server, {join, self(), Channel, St#client_st.nick})) of
 		% If the server process crashes or is unreachable, catch the EXIT signal
 		{'EXIT', _} ->
-			{reply, {error, server_not_reached, "server unreachable"}, St};
+			{reply, {error, server_not_reached, "failed to reach the server"}, St};
 		% If the server timeout occurs
 		timeout_error ->
-			{reply, {error, server_not_reached, "server unreachable"}, St};
+			{reply, {error, server_not_reached, "failed to reach the server"}, St};
 		% If the server responds with 'ok', the join operation was successful
 		ok ->
 			{reply, ok, St};
 		% If the server responds with 'error', the user is already in the channel
 		error ->
-			{reply, {error, user_already_joined, "user already joined"}, St}
+			{reply, {error, user_already_joined, "user already joined the channel"}, St}
 	end;
 
 % Leave channel
@@ -51,25 +52,25 @@ handle(St, {leave, Channel}) ->
 	% Self() is the Pid of this client process
 	case catch (genserver:request(list_to_atom(Channel), {leave, self()})) of
 		{'EXIT', _} ->
-			{reply, {error, server_not_reached, "server unreachable"}, St};
+			{reply, {error, server_not_reached, "failed to reach the server"}, St};
 		timeout_error ->
-			{reply, {error, server_not_reached, "server unreachable"}, St};
+			{reply, {error, server_not_reached, "failed to reach the server"}, St};
 		ok ->
 			{reply, ok, St};
 		error ->
-			{reply, {error, user_not_joined, "user not in channel"}, St}
+			{reply, {error, user_not_joined, "user not in the channel"}, St}
 	end;
 
 % Sending message (from GUI, to channel)
-% GUI -> Client process(this code) -> Channel process(receive message) -> Other clients in channel(broadcast to all members)
+% GUI -> Client process -> Channel process -> Other clients in channel
 handle(St, {message_send, Channel, Msg}) ->
 	% Send a message to the specified channel
 	% The request includes the sender's nickname, message content, and PID
-	case (catch genserver:request(list_to_atom(Channel), {message_send, St#client_st.nick, Msg, self()})) of
+	case (catch genserver:request(list_to_atom(Channel), {message_send, self(), St#client_st.nick, Msg})) of
 		{'EXIT', _} ->
-			{reply, {error, server_not_reached, "server unreachable"}, St};
+			{reply, {error, server_not_reached, "failed to reach the server"}, St};
 		timeout_error ->
-			{reply, {error, server_not_reached, "server unreachable"}, St};
+			{reply, {error, server_not_reached, "failed to reach the server"}, St};
 		ok ->
 			{reply, ok, St};
 		error ->
@@ -83,9 +84,9 @@ handle(St, {nick, NewNick}) ->
 	% Include both the old nick and the new nick for validation
 	case catch (genserver:request(St#client_st.server, {nick, St#client_st.nick, NewNick})) of
 		{'EXIT', _} ->
-			{reply, {error, server_not_reached, "Server unreachable"}, St};
+			{reply, {error, server_not_reached, "failed to reach the server"}, St};
 		timeout_error ->
-			{reply, {error, server_not_reached, "server unreachable"}, St};
+			{reply, {error, server_not_reached, "failed to reach the server"}, St};
 		ok ->
 			{reply, ok, St#client_st{nick = NewNick}};
 		error ->

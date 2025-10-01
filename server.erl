@@ -37,35 +37,35 @@ start(ServerAtom) ->
 % Stop the server process registered to the given name,
 % together with any other associated processes
 stop(ServerAtom) ->
-	genserver:request(ServerAtom, {stop}),
-	genserver:stop(ServerAtom).
+	genserver:request(ServerAtom, {stop}), % stop all the channels
+	genserver:stop(ServerAtom). % stop the server
 
-% Stop the server and all associated channel processes
+% Stop all the associated channel processes
 handle(St, {stop}) ->
 	lists:foreach(fun(Channel) -> genserver:stop(list_to_atom(Channel)) end, St#server_st.channels),
 	{reply, ok, St};
 
-% Handle a user joining a channel - creates channel if it doesn't exist
-% Also registers the user's nickname if it's their first join
-handle(St, {join, Channel, Nick, Pid}) ->
-	% Extract existing nicks
+% Handle a user joining a channel
+% Registers the user's nickname if it's their first join (for nick_taken check)
+% Server first creates the channel (if it doesn't exist), then channel adds the client
+handle(St, {join, Client, Channel, Nick}) ->
+	% 1 Check if this nick is already registered
 	ExistingNicks = St#server_st.nicks,
-	% Check if this nick is already registered
 	NickRegistered = lists:member(Nick, ExistingNicks),
 	% Register nick if it's the first time
 	UpdatedNicks = case NickRegistered of
 					   true -> ExistingNicks;
 					   false -> [Nick | ExistingNicks]
 				   end,
-	% Check if channel exists, create if needed
+	% 2 Check if channel exists, create if needed
 	case whereis(list_to_atom(Channel)) of
 		undefined -> % channel doesn't exist
 			genserver:start(list_to_atom(Channel), initial_channel_state(Channel), fun handleChannel/2);
 		_ -> % channel exists
 			ok
 	end,
-	% Try to join the channel
-	case catch (genserver:request(list_to_atom(Channel), {join, Pid})) of
+	% 3 Join the channel
+	case catch (genserver:request(list_to_atom(Channel), {join, Client})) of
 		ok -> % successfully joined
 			{reply, ok, St#server_st{channels = [Channel | St#server_st.channels], nicks = UpdatedNicks}};
 		_ ->
@@ -93,27 +93,27 @@ handle(St, {nick, OldNick, NewNick}) ->
 	end.
 
 % Add a user to the channel's client list
-handleChannel(St, {join, Pid}) ->
-	case lists:member(Pid, St#channel_st.clients) of
-		false -> % user not found
-			{reply, ok, St#channel_st{clients = [Pid | St#channel_st.clients]}}; % add user
+handleChannel(St, {join, Client}) ->
+	case lists:member(Client, St#channel_st.clients) of
+		false -> % user not found, then add
+			{reply, ok, St#channel_st{clients = [Client | St#channel_st.clients]}}; % add user
 		true -> % user is already in channel
 			{reply, error, St}
 	end;
 
 % Remove a user from the channel's client list
-handleChannel(St, {leave, Pid}) ->
-	case lists:member(Pid, St#channel_st.clients) of
-		true -> % user found
-			{reply, ok, St#channel_st{clients = lists:delete(Pid, St#channel_st.clients)}}; %delete user
-		false -> % no user found
+handleChannel(St, {leave, Client}) ->
+	case lists:member(Client, St#channel_st.clients) of
+		true -> % user found, then delete
+			{reply, ok, St#channel_st{clients = lists:delete(Client, St#channel_st.clients)}}; %delete user
+		false -> % user not found
 			{reply, error, St}
 	end;
 
 % Broadcast a message to all users in the channel except the sender
-handleChannel(St, {message_send, Nick, Msg, Sender}) ->
+handleChannel(St, {message_send, Sender, Nick, Msg}) ->
 	case lists:member(Sender, St#channel_st.clients) of
-		true -> % user in channel
+		true -> % user in channel, send messages to all the users in the channel
 			spawn(fun() ->
 				[genserver:request(ChannelUsers, {message_receive, St#channel_st.name, Nick, Msg}) || ChannelUsers <- St#channel_st.clients, ChannelUsers =/= Sender]
 				  end),
