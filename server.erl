@@ -65,14 +65,21 @@ handle(St, {join, Channel, Pid}) ->
 handle(St, {nick, OldNick, NewNick}) ->
 	% Extract the existing nicks list from server state
 	ExistingNicks = St#server_st.nicks,
+
+	% First, ensure the old nick is in the list
+	ExistingNicksWithOld = case lists:member(OldNick, ExistingNicks) of
+							   true -> ExistingNicks;
+							   false -> [OldNick | ExistingNicks]
+						   end,
+
 	% Check if the new nickname already exists
-	case lists:member(NewNick, ExistingNicks) of
+	case lists:member(NewNick, ExistingNicksWithOld) of
 		true ->
 			{reply, error, St};
 		false ->
 			% Update state: remove old nick and add new nick
-			NewState = St#server_st{nicks = [NewNick | lists:delete(OldNick, ExistingNicks)]},
-			{reply, nick, NewState}
+			NewState = St#server_st{nicks = [NewNick | lists:delete(OldNick, ExistingNicksWithOld)]},
+			{reply, ok, NewState}
 	end.
 
 % Add a user to the channel's client list
